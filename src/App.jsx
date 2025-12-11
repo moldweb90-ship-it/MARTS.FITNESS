@@ -231,6 +231,7 @@ const MartsLanding = () => {
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
+      waitingForGesture && setWaitingForGesture(false);
       audio.volume = 0;
       audio
         .play()
@@ -253,10 +254,14 @@ const MartsLanding = () => {
           }, 80);
           setIsAudioPlaying(true);
         })
-        .catch(() => setIsAudioPlaying(false));
+        .catch(() => {
+          setIsAudioPlaying(false);
+          setWaitingForGesture(true);
+        });
     } else {
       audio.pause();
       setIsAudioPlaying(false);
+      setWaitingForGesture(false);
     }
   };
 
@@ -400,10 +405,16 @@ const MartsLanding = () => {
             <button
               onClick={toggleAudio}
               className="px-3 py-1 border border-white/20 rounded-full text-xs font-bold hover:bg-white hover:text-black transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!audioReady}
+              disabled={!audioReady && !waitingForGesture}
             >
-              {isAudioPlaying ? <Volume2 size={16} /> : <VolumeX size={16} />}
-              {isAudioPlaying ? "SOUND ON" : "SOUND OFF"}
+              {isAudioPlaying || waitingForGesture ? <Volume2 size={16} /> : <VolumeX size={16} />}
+              {lang === "ru"
+                ? isAudioPlaying || waitingForGesture
+                  ? "ЗВУК ВКЛ"
+                  : "ЗВУК ВЫКЛ"
+                : isAudioPlaying || waitingForGesture
+                  ? "SUNET PORNIT"
+                  : "SUNET OPRIT"}
             </button>
             <button onClick={() => setIsMenuOpen((prev) => !prev)} className="md:hidden text-white">
               {isMenuOpen ? <X size={32} /> : <Menu size={32} />}
