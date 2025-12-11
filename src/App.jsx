@@ -119,7 +119,6 @@ const MartsLanding = () => {
   const [showVideo, setShowVideo] = useState(false);
   const [showOfferModal, setShowOfferModal] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  const [waitingForGesture, setWaitingForGesture] = useState(false);
   const [wasPlayingBeforeVideo, setWasPlayingBeforeVideo] = useState(false);
   const audioRef = useRef(null);
   const saveTimerRef = useRef(null);
@@ -165,6 +164,8 @@ const MartsLanding = () => {
     const audio = new Audio(heroTrack);
     audio.loop = true;
     audio.preload = "auto";
+    audio.autoplay = false;
+    audio.volume = 0;
     audioRef.current = audio;
 
     const saved = (() => {
@@ -176,8 +177,11 @@ const MartsLanding = () => {
       }
     })();
 
-    if (saved?.time) {
+    const shouldResume = saved?.playing === true;
+    if (shouldResume && typeof saved?.time === "number") {
       audio.currentTime = saved.time;
+    } else {
+      audio.currentTime = 0;
     }
 
     const clearSaver = () => {
@@ -193,7 +197,7 @@ const MartsLanding = () => {
           AUDIO_STATE_KEY,
           JSON.stringify({
             time: audio.currentTime,
-            playing: !audio.paused
+            playing: !audio.paused && isAudioPlaying
           })
         );
       } catch {
@@ -211,91 +215,62 @@ const MartsLanding = () => {
       persist();
     };
 
-    const fadeTo = (vol) => {
-      const steps = 12;
-      const step = (vol - audio.volume) / steps;
-      let current = audio.volume;
-      const id = setInterval(() => {
-        if (!audioRef.current) {
-          clearInterval(id);
-          return;
-        }
-        current += step;
-        if (current >= vol) {
-          audio.volume = vol;
-          clearInterval(id);
-        } else {
-          audio.volume = current;
-        }
-      }, 80);
-    };
-
-    const playWithFade = async () => {
-      if (!audioRef.current) return false;
-      audio.muted = true;
-      audio.volume = 0;
-      try {
-        await audio.play();
-        setIsAudioPlaying(true);
-        setWaitingForGesture(false);
-        setTimeout(() => {
-          if (!audioRef.current) return;
-          audioRef.current.muted = false;
-          fadeTo(targetVolume);
-        }, 120);
-        startSaver();
-        return true;
-      } catch {
-        setIsAudioPlaying(false);
-        setWaitingForGesture(true);
-        stopSaver();
-        return false;
-      }
-    };
-
-    const onFirstGesture = () => {
-      playWithFade();
-      detachGestureListeners();
-    };
-
-    const attachGestureListeners = () => {
-      document.addEventListener("click", onFirstGesture, { once: true });
-      document.addEventListener("touchstart", onFirstGesture, { once: true });
-      document.addEventListener("pointermove", onFirstGesture, { once: true });
-      document.addEventListener("keydown", onFirstGesture, { once: true });
-      document.addEventListener("scroll", onFirstGesture, { once: true });
-    };
-
-    const detachGestureListeners = () => {
-      document.removeEventListener("click", onFirstGesture);
-      document.removeEventListener("touchstart", onFirstGesture);
-      document.removeEventListener("pointermove", onFirstGesture);
-      document.removeEventListener("keydown", onFirstGesture);
-      document.removeEventListener("scroll", onFirstGesture);
-    };
-
-    // Start if previously playing, else wait for gesture
-    const shouldAutoplay = saved?.playing;
-    if (shouldAutoplay) {
-      playWithFade();
-      attachGestureListeners();
-    } else {
-      setWaitingForGesture(true);
-      attachGestureListeners();
-    }
+    // Всегда стартуем в паузе, без автоплея
+    audio.pause();
+    setIsAudioPlaying(false);
 
     audio.addEventListener("play", startSaver);
     audio.addEventListener("pause", stopSaver);
     window.addEventListener("beforeunload", stopSaver);
 
     return () => {
-      detachGestureListeners();
       window.removeEventListener("beforeunload", stopSaver);
       audio.pause();
       stopSaver();
       audioRef.current = null;
     };
   }, []);
+
+  const playAudio = async () => {
+    const audio = audioRef.current;
+    if (!audio) return false;
+    // при первом старте сбрасываем на начало, если не было явного play ранее
+    if (!isAudioPlaying && audio.paused && audio.currentTime > 0.01) {
+      audio.currentTime = audio.currentTime || 0;
+    }
+    audio.volume = 0;
+    try {
+      await audio.play();
+      setIsAudioPlaying(true);
+      const steps = 12;
+      const step = targetVolume / steps;
+      let current = 0;
+      const id = setInterval(() => {
+        if (!audioRef.current) {
+          clearInterval(id);
+          return;
+        }
+        current += step;
+        if (current >= targetVolume) {
+          audioRef.current.volume = targetVolume;
+          clearInterval(id);
+        } else {
+          audioRef.current.volume = current;
+        }
+      }, 80);
+      return true;
+    } catch {
+      setIsAudioPlaying(false);
+      return false;
+    }
+  };
+
+  const pauseAudio = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.pause();
+    setIsAudioPlaying(false);
+  };
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -307,35 +282,7 @@ const MartsLanding = () => {
         setIsAudioPlaying(false);
       }
     } else if (wasPlayingBeforeVideo) {
-      audio.muted = true;
-      audio.volume = 0;
-      audio
-        .play()
-        .then(() => {
-          setIsAudioPlaying(true);
-          setWaitingForGesture(false);
-          setTimeout(() => {
-            if (!audioRef.current) return;
-            audioRef.current.muted = false;
-            const steps = 12;
-            const step = targetVolume / steps;
-            let current = 0;
-            const id = setInterval(() => {
-              if (!audioRef.current) {
-                clearInterval(id);
-                return;
-              }
-              current += step;
-              if (current >= targetVolume) {
-                audioRef.current.volume = targetVolume;
-                clearInterval(id);
-              } else {
-                audioRef.current.volume = current;
-              }
-            }, 80);
-          }, 120);
-        })
-        .catch(() => setWaitingForGesture(true));
+      playAudio();
       setWasPlayingBeforeVideo(false);
     }
   }, [showVideo, wasPlayingBeforeVideo]);
@@ -346,35 +293,9 @@ const MartsLanding = () => {
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
-      audio.muted = true;
-      audio.volume = 0;
-      audio
-        .play()
-        .then(() => {
-          setIsAudioPlaying(true);
-          setWaitingForGesture(false);
-          const steps = 12;
-          const step = targetVolume / steps;
-          let current = 0;
-          const id = setInterval(() => {
-            if (!audioRef.current) {
-              clearInterval(id);
-              return;
-            }
-            current += step;
-            if (current >= targetVolume) {
-              audioRef.current.volume = targetVolume;
-              audioRef.current.muted = false;
-              clearInterval(id);
-            } else {
-              audioRef.current.volume = current;
-            }
-          }, 80);
-        })
-        .catch(() => setWaitingForGesture(true));
+      playAudio();
     } else {
-      audio.pause();
-      setIsAudioPlaying(false);
+      pauseAudio();
     }
   };
 
