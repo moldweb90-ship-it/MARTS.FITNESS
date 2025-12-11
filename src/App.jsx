@@ -121,7 +121,9 @@ const MartsLanding = () => {
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [audioReady, setAudioReady] = useState(false);
   const [wasPlayingBeforeVideo, setWasPlayingBeforeVideo] = useState(false);
+  const [waitingForGesture, setWaitingForGesture] = useState(false);
   const audioRef = useRef(null);
+  const targetVolume = 0.45;
   const t = translations[lang];
 
   useEffect(() => {
@@ -135,8 +137,28 @@ const MartsLanding = () => {
   useEffect(() => {
     const audio = new Audio(heroTrack);
     audio.loop = true;
-    audio.volume = 0.45;
+    audio.volume = 0;
     audioRef.current = audio;
+
+    const fadeIn = () => {
+      if (!audioRef.current) return;
+      const steps = 12;
+      const step = targetVolume / steps;
+      let current = 0;
+      const id = setInterval(() => {
+        if (!audioRef.current) {
+          clearInterval(id);
+          return;
+        }
+        current += step;
+        if (current >= targetVolume) {
+          audioRef.current.volume = targetVolume;
+          clearInterval(id);
+        } else {
+          audioRef.current.volume = current;
+        }
+      }, 80);
+    };
 
     const cleanup = () => {
       document.removeEventListener("click", onFirstInteraction);
@@ -148,23 +170,32 @@ const MartsLanding = () => {
     const startAudio = async () => {
       try {
         await audio.play();
+        fadeIn();
         setIsAudioPlaying(true);
+        setWaitingForGesture(false);
       } catch {
         setIsAudioPlaying(false);
+        setWaitingForGesture(true);
       } finally {
         setAudioReady(true);
       }
-      cleanup();
+      if (!waitingForGesture) cleanup();
     };
 
     const onFirstInteraction = () => {
-      startAudio();
+      startAudio().finally(cleanup);
     };
 
-    document.addEventListener("click", onFirstInteraction, { once: true });
-    document.addEventListener("touchstart", onFirstInteraction, { once: true });
-    document.addEventListener("keydown", onFirstInteraction, { once: true });
-    document.addEventListener("scroll", onFirstInteraction, { once: true });
+    // попытка автозапуска сразу
+    startAudio();
+
+    // и страховка — запуск после первого взаимодействия, если браузер заблокировал
+    if (!audioReady || waitingForGesture) {
+      document.addEventListener("click", onFirstInteraction, { once: true });
+      document.addEventListener("touchstart", onFirstInteraction, { once: true });
+      document.addEventListener("keydown", onFirstInteraction, { once: true });
+      document.addEventListener("scroll", onFirstInteraction, { once: true });
+    }
 
     return () => {
       cleanup();
@@ -200,9 +231,28 @@ const MartsLanding = () => {
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
+      audio.volume = 0;
       audio
         .play()
-        .then(() => setIsAudioPlaying(true))
+        .then(() => {
+          const steps = 12;
+          const step = targetVolume / steps;
+          let current = 0;
+          const id = setInterval(() => {
+            if (!audioRef.current) {
+              clearInterval(id);
+              return;
+            }
+            current += step;
+            if (current >= targetVolume) {
+              audioRef.current.volume = targetVolume;
+              clearInterval(id);
+            } else {
+              audioRef.current.volume = current;
+            }
+          }, 80);
+          setIsAudioPlaying(true);
+        })
         .catch(() => setIsAudioPlaying(false));
     } else {
       audio.pause();
