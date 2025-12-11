@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Dumbbell,
@@ -13,13 +13,16 @@ import {
   Wind,
   X,
   Zap,
-  Droplets
+  Droplets,
+  Volume2,
+  VolumeX
 } from "lucide-react";
 import jelezoImg from "../images/jelezo.jpg";
 import boycovskiiImg from "../images/Boycovskii_klub.jpg";
 import cycleRaveImg from "../images/CYCLE_RAVE.jpg";
 import spaImg from "../images/SPA.jpg";
 import openAirImg from "../images/OPEN_AIR.jpg";
+import heroTrack from "./MARTS.FITNESS.mp3";
 
 const translations = {
   ru: {
@@ -115,6 +118,10 @@ const MartsLanding = () => {
   const [scrolled, setScrolled] = useState(false);
   const [showVideo, setShowVideo] = useState(false);
   const [showOfferModal, setShowOfferModal] = useState(false);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [audioReady, setAudioReady] = useState(false);
+  const [wasPlayingBeforeVideo, setWasPlayingBeforeVideo] = useState(false);
+  const audioRef = useRef(null);
   const t = translations[lang];
 
   useEffect(() => {
@@ -125,7 +132,83 @@ const MartsLanding = () => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  useEffect(() => {
+    const audio = new Audio(heroTrack);
+    audio.loop = true;
+    audio.volume = 0.45;
+    audioRef.current = audio;
+
+    const cleanup = () => {
+      document.removeEventListener("click", onFirstInteraction);
+      document.removeEventListener("touchstart", onFirstInteraction);
+      document.removeEventListener("keydown", onFirstInteraction);
+      document.removeEventListener("scroll", onFirstInteraction);
+    };
+
+    const startAudio = async () => {
+      try {
+        await audio.play();
+        setIsAudioPlaying(true);
+      } catch {
+        setIsAudioPlaying(false);
+      } finally {
+        setAudioReady(true);
+      }
+      cleanup();
+    };
+
+    const onFirstInteraction = () => {
+      startAudio();
+    };
+
+    document.addEventListener("click", onFirstInteraction, { once: true });
+    document.addEventListener("touchstart", onFirstInteraction, { once: true });
+    document.addEventListener("keydown", onFirstInteraction, { once: true });
+    document.addEventListener("scroll", onFirstInteraction, { once: true });
+
+    return () => {
+      cleanup();
+      audio.pause();
+      audioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (showVideo) {
+      if (!audio.paused) {
+        setWasPlayingBeforeVideo(true);
+        audio.pause();
+        setIsAudioPlaying(false);
+      } else {
+        setWasPlayingBeforeVideo(false);
+      }
+    } else if (wasPlayingBeforeVideo) {
+      audio
+        .play()
+        .then(() => setIsAudioPlaying(true))
+        .catch(() => setIsAudioPlaying(false));
+      setWasPlayingBeforeVideo(false);
+    }
+  }, [showVideo, wasPlayingBeforeVideo]);
+
   const toggleLang = () => setLang((prev) => (prev === "ru" ? "ro" : "ru"));
+
+  const toggleAudio = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      audio
+        .play()
+        .then(() => setIsAudioPlaying(true))
+        .catch(() => setIsAudioPlaying(false));
+    } else {
+      audio.pause();
+      setIsAudioPlaying(false);
+    }
+  };
 
   const scrollToSection = (id) => {
     setIsMenuOpen(false);
@@ -263,6 +346,14 @@ const MartsLanding = () => {
               className="px-3 py-1 border border-white/20 rounded-full text-xs font-bold hover:bg-white hover:text-black transition-all"
             >
               {lang.toUpperCase()}
+            </button>
+            <button
+              onClick={toggleAudio}
+              className="px-3 py-1 border border-white/20 rounded-full text-xs font-bold hover:bg-white hover:text-black transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!audioReady}
+            >
+              {isAudioPlaying ? <Volume2 size={16} /> : <VolumeX size={16} />}
+              {isAudioPlaying ? "SOUND ON" : "SOUND OFF"}
             </button>
             <button onClick={() => setIsMenuOpen((prev) => !prev)} className="md:hidden text-white">
               {isMenuOpen ? <X size={32} /> : <Menu size={32} />}
