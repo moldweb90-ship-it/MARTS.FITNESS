@@ -125,6 +125,8 @@ const MartsLanding = () => {
   const audioRef = useRef(null);
   const targetVolume = 0.45;
   const playAttempts = useRef(0);
+  const retryTimer = useRef(null);
+  const retryInterval = useRef(null);
   const t = translations[lang];
 
   useEffect(() => {
@@ -142,22 +144,14 @@ const MartsLanding = () => {
     audio.autoplay = true;
     audioRef.current = audio;
 
-    const tryPlay = async () => {
-      if (!audioRef.current) return;
-      playAttempts.current += 1;
-      audioRef.current.volume = 0;
-      try {
-        await audioRef.current.play();
-        fadeIn();
-        setIsAudioPlaying(true);
-        setWaitingForGesture(false);
-        setAudioReady(true);
-        return true;
-      } catch {
-        setIsAudioPlaying(false);
-        setWaitingForGesture(true);
-        setAudioReady(true);
-        return false;
+    const clearRetries = () => {
+      if (retryTimer.current) {
+        clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+      }
+      if (retryInterval.current) {
+        clearInterval(retryInterval.current);
+        retryInterval.current = null;
       }
     };
 
@@ -181,6 +175,26 @@ const MartsLanding = () => {
       }, 80);
     };
 
+    const tryPlay = async () => {
+      if (!audioRef.current) return false;
+      playAttempts.current += 1;
+      audioRef.current.volume = 0;
+      try {
+        await audioRef.current.play();
+        fadeIn();
+        setIsAudioPlaying(true);
+        setWaitingForGesture(false);
+        setAudioReady(true);
+        clearRetries();
+        return true;
+      } catch {
+        setIsAudioPlaying(false);
+        setWaitingForGesture(true);
+        setAudioReady(true);
+        return false;
+      }
+    };
+
     const cleanup = () => {
       document.removeEventListener("click", onFirstInteraction);
       document.removeEventListener("touchstart", onFirstInteraction);
@@ -189,16 +203,20 @@ const MartsLanding = () => {
       window.removeEventListener("focus", onWindowFocus);
       document.removeEventListener("visibilitychange", onVisibility);
       document.removeEventListener("pointermove", onPointerMove);
+      clearRetries();
     };
 
     const startAudio = async () => {
       const ok = await tryPlay();
       if (!ok) {
-        // retry a couple times with small delay
-        setTimeout(() => tryPlay(), 400);
-        setTimeout(() => tryPlay(), 1200);
-      } else {
-        cleanup();
+        retryTimer.current = setTimeout(() => tryPlay(), 500);
+        retryInterval.current = setInterval(() => {
+          if (playAttempts.current > 12) {
+            clearRetries();
+            return;
+          }
+          tryPlay();
+        }, 1200);
       }
     };
 
