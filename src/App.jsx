@@ -124,6 +124,7 @@ const MartsLanding = () => {
   const [waitingForGesture, setWaitingForGesture] = useState(false);
   const audioRef = useRef(null);
   const targetVolume = 0.45;
+  const playAttempts = useRef(0);
   const t = translations[lang];
 
   useEffect(() => {
@@ -138,7 +139,27 @@ const MartsLanding = () => {
     const audio = new Audio(heroTrack);
     audio.loop = true;
     audio.volume = 0;
+    audio.autoplay = true;
     audioRef.current = audio;
+
+    const tryPlay = async () => {
+      if (!audioRef.current) return;
+      playAttempts.current += 1;
+      audioRef.current.volume = 0;
+      try {
+        await audioRef.current.play();
+        fadeIn();
+        setIsAudioPlaying(true);
+        setWaitingForGesture(false);
+        setAudioReady(true);
+        return true;
+      } catch {
+        setIsAudioPlaying(false);
+        setWaitingForGesture(true);
+        setAudioReady(true);
+        return false;
+      }
+    };
 
     const fadeIn = () => {
       if (!audioRef.current) return;
@@ -165,37 +186,43 @@ const MartsLanding = () => {
       document.removeEventListener("touchstart", onFirstInteraction);
       document.removeEventListener("keydown", onFirstInteraction);
       document.removeEventListener("scroll", onFirstInteraction);
+      window.removeEventListener("focus", onWindowFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("pointermove", onPointerMove);
     };
 
     const startAudio = async () => {
-      try {
-        await audio.play();
-        fadeIn();
-        setIsAudioPlaying(true);
-        setWaitingForGesture(false);
-      } catch {
-        setIsAudioPlaying(false);
-        setWaitingForGesture(true);
-      } finally {
-        setAudioReady(true);
+      const ok = await tryPlay();
+      if (!ok) {
+        // retry a couple times with small delay
+        setTimeout(() => tryPlay(), 400);
+        setTimeout(() => tryPlay(), 1200);
+      } else {
+        cleanup();
       }
-      if (!waitingForGesture) cleanup();
     };
 
     const onFirstInteraction = () => {
       startAudio().finally(cleanup);
     };
 
+    const onWindowFocus = () => startAudio();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") startAudio();
+    };
+    const onPointerMove = () => startAudio();
+
     // попытка автозапуска сразу
     startAudio();
 
     // и страховка — запуск после первого взаимодействия, если браузер заблокировал
-    if (!audioReady || waitingForGesture) {
-      document.addEventListener("click", onFirstInteraction, { once: true });
-      document.addEventListener("touchstart", onFirstInteraction, { once: true });
-      document.addEventListener("keydown", onFirstInteraction, { once: true });
-      document.addEventListener("scroll", onFirstInteraction, { once: true });
-    }
+    document.addEventListener("click", onFirstInteraction, { once: true });
+    document.addEventListener("touchstart", onFirstInteraction, { once: true });
+    document.addEventListener("keydown", onFirstInteraction, { once: true });
+    document.addEventListener("scroll", onFirstInteraction, { once: true });
+    document.addEventListener("pointermove", onPointerMove, { once: true });
+    window.addEventListener("focus", onWindowFocus);
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       cleanup();
