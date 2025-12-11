@@ -119,15 +119,13 @@ const MartsLanding = () => {
   const [showVideo, setShowVideo] = useState(false);
   const [showOfferModal, setShowOfferModal] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  const [audioReady, setAudioReady] = useState(false);
-  const [wasPlayingBeforeVideo, setWasPlayingBeforeVideo] = useState(false);
   const [waitingForGesture, setWaitingForGesture] = useState(false);
+  const [wasPlayingBeforeVideo, setWasPlayingBeforeVideo] = useState(false);
   const audioRef = useRef(null);
-  const targetVolume = 0.45;
-  const playAttempts = useRef(0);
-  const retryTimer = useRef(null);
-  const retryInterval = useRef(null);
+  const saveTimerRef = useRef(null);
   const t = translations[lang];
+  const targetVolume = 0.45;
+  const AUDIO_STATE_KEY = "marts-audio-state";
 
   useEffect(() => {
     const handleScroll = () => {
@@ -137,114 +135,164 @@ const MartsLanding = () => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  // SEO title/description per locale
+  useEffect(() => {
+    const titleRu = "MARTS FITNESS: Новый фитнес-клуб на Чеканах. Скоро открытие";
+    const descRu =
+      "Скоро открытие на Чеканах! 2500 м² чистой энергии: Technogym, SPA-этаж, Fight Club и терраса на крыше. Не будь как все — залетай в закрытый список Presale! 🚀";
+    const titleRo = "MARTS FITNESS: Club nou de fitness la Ciocana. În curând.";
+    const descRo =
+      "Nu e doar o sală, e un ecosistem. 2500 m² de sport și relaxare. Technogym, SPA, CrossFit. Ia cel mai bun preț înainte de deschidere.";
+
+    const nextTitle = lang === "ru" ? titleRu : titleRo;
+    const nextDesc = lang === "ru" ? descRu : descRo;
+    document.title = nextTitle;
+
+    const ensureMeta = () => {
+      let meta = document.querySelector("meta[name='description']");
+      if (!meta) {
+        meta = document.createElement("meta");
+        meta.setAttribute("name", "description");
+        document.head.appendChild(meta);
+      }
+      meta.setAttribute("content", nextDesc);
+    };
+
+    ensureMeta();
+  }, [lang]);
+
   useEffect(() => {
     const audio = new Audio(heroTrack);
     audio.loop = true;
-    audio.volume = 0;
-    audio.autoplay = true;
+    audio.preload = "auto";
     audioRef.current = audio;
 
-    const clearRetries = () => {
-      if (retryTimer.current) {
-        clearTimeout(retryTimer.current);
-        retryTimer.current = null;
+    const saved = (() => {
+      try {
+        const raw = localStorage.getItem(AUDIO_STATE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
       }
-      if (retryInterval.current) {
-        clearInterval(retryInterval.current);
-        retryInterval.current = null;
+    })();
+
+    if (saved?.time) {
+      audio.currentTime = saved.time;
+    }
+
+    const clearSaver = () => {
+      if (saveTimerRef.current) {
+        clearInterval(saveTimerRef.current);
+        saveTimerRef.current = null;
       }
     };
 
-    const fadeIn = () => {
-      if (!audioRef.current) return;
+    const persist = () => {
+      try {
+        localStorage.setItem(
+          AUDIO_STATE_KEY,
+          JSON.stringify({
+            time: audio.currentTime,
+            playing: !audio.paused
+          })
+        );
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const startSaver = () => {
+      clearSaver();
+      saveTimerRef.current = setInterval(persist, 2000);
+    };
+
+    const stopSaver = () => {
+      clearSaver();
+      persist();
+    };
+
+    const fadeTo = (vol) => {
       const steps = 12;
-      const step = targetVolume / steps;
-      let current = 0;
+      const step = (vol - audio.volume) / steps;
+      let current = audio.volume;
       const id = setInterval(() => {
         if (!audioRef.current) {
           clearInterval(id);
           return;
         }
         current += step;
-        if (current >= targetVolume) {
-          audioRef.current.volume = targetVolume;
+        if (current >= vol) {
+          audio.volume = vol;
           clearInterval(id);
         } else {
-          audioRef.current.volume = current;
+          audio.volume = current;
         }
       }, 80);
     };
 
-    const tryPlay = async () => {
+    const playWithFade = async () => {
       if (!audioRef.current) return false;
-      playAttempts.current += 1;
-      audioRef.current.volume = 0;
+      audio.muted = true;
+      audio.volume = 0;
       try {
-        await audioRef.current.play();
-        fadeIn();
+        await audio.play();
         setIsAudioPlaying(true);
         setWaitingForGesture(false);
-        setAudioReady(true);
-        clearRetries();
+        setTimeout(() => {
+          if (!audioRef.current) return;
+          audioRef.current.muted = false;
+          fadeTo(targetVolume);
+        }, 120);
+        startSaver();
         return true;
       } catch {
         setIsAudioPlaying(false);
         setWaitingForGesture(true);
-        setAudioReady(true);
+        stopSaver();
         return false;
       }
     };
 
-    const cleanup = () => {
-      document.removeEventListener("click", onFirstInteraction);
-      document.removeEventListener("touchstart", onFirstInteraction);
-      document.removeEventListener("keydown", onFirstInteraction);
-      document.removeEventListener("scroll", onFirstInteraction);
-      window.removeEventListener("focus", onWindowFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-      document.removeEventListener("pointermove", onPointerMove);
-      clearRetries();
+    const onFirstGesture = () => {
+      playWithFade();
+      detachGestureListeners();
     };
 
-    const startAudio = async () => {
-      const ok = await tryPlay();
-      if (!ok) {
-        retryTimer.current = setTimeout(() => tryPlay(), 500);
-        retryInterval.current = setInterval(() => {
-          if (playAttempts.current > 12) {
-            clearRetries();
-            return;
-          }
-          tryPlay();
-        }, 1200);
-      }
+    const attachGestureListeners = () => {
+      document.addEventListener("click", onFirstGesture, { once: true });
+      document.addEventListener("touchstart", onFirstGesture, { once: true });
+      document.addEventListener("pointermove", onFirstGesture, { once: true });
+      document.addEventListener("keydown", onFirstGesture, { once: true });
+      document.addEventListener("scroll", onFirstGesture, { once: true });
     };
 
-    const onFirstInteraction = () => {
-      startAudio().finally(cleanup);
+    const detachGestureListeners = () => {
+      document.removeEventListener("click", onFirstGesture);
+      document.removeEventListener("touchstart", onFirstGesture);
+      document.removeEventListener("pointermove", onFirstGesture);
+      document.removeEventListener("keydown", onFirstGesture);
+      document.removeEventListener("scroll", onFirstGesture);
     };
 
-    const onWindowFocus = () => startAudio();
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") startAudio();
-    };
-    const onPointerMove = () => startAudio();
+    // Start if previously playing, else wait for gesture
+    const shouldAutoplay = saved?.playing;
+    if (shouldAutoplay) {
+      playWithFade();
+      attachGestureListeners();
+    } else {
+      setWaitingForGesture(true);
+      attachGestureListeners();
+    }
 
-    // попытка автозапуска сразу
-    startAudio();
-
-    // и страховка — запуск после первого взаимодействия, если браузер заблокировал
-    document.addEventListener("click", onFirstInteraction, { once: true });
-    document.addEventListener("touchstart", onFirstInteraction, { once: true });
-    document.addEventListener("keydown", onFirstInteraction, { once: true });
-    document.addEventListener("scroll", onFirstInteraction, { once: true });
-    document.addEventListener("pointermove", onPointerMove, { once: true });
-    window.addEventListener("focus", onWindowFocus);
-    document.addEventListener("visibilitychange", onVisibility);
+    audio.addEventListener("play", startSaver);
+    audio.addEventListener("pause", stopSaver);
+    window.addEventListener("beforeunload", stopSaver);
 
     return () => {
-      cleanup();
+      detachGestureListeners();
+      window.removeEventListener("beforeunload", stopSaver);
       audio.pause();
+      stopSaver();
       audioRef.current = null;
     };
   }, []);
@@ -252,20 +300,42 @@ const MartsLanding = () => {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-
     if (showVideo) {
       if (!audio.paused) {
         setWasPlayingBeforeVideo(true);
         audio.pause();
         setIsAudioPlaying(false);
-      } else {
-        setWasPlayingBeforeVideo(false);
       }
     } else if (wasPlayingBeforeVideo) {
+      audio.muted = true;
+      audio.volume = 0;
       audio
         .play()
-        .then(() => setIsAudioPlaying(true))
-        .catch(() => setIsAudioPlaying(false));
+        .then(() => {
+          setIsAudioPlaying(true);
+          setWaitingForGesture(false);
+          setTimeout(() => {
+            if (!audioRef.current) return;
+            audioRef.current.muted = false;
+            const steps = 12;
+            const step = targetVolume / steps;
+            let current = 0;
+            const id = setInterval(() => {
+              if (!audioRef.current) {
+                clearInterval(id);
+                return;
+              }
+              current += step;
+              if (current >= targetVolume) {
+                audioRef.current.volume = targetVolume;
+                clearInterval(id);
+              } else {
+                audioRef.current.volume = current;
+              }
+            }, 80);
+          }, 120);
+        })
+        .catch(() => setWaitingForGesture(true));
       setWasPlayingBeforeVideo(false);
     }
   }, [showVideo, wasPlayingBeforeVideo]);
@@ -276,11 +346,13 @@ const MartsLanding = () => {
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
-      waitingForGesture && setWaitingForGesture(false);
+      audio.muted = true;
       audio.volume = 0;
       audio
         .play()
         .then(() => {
+          setIsAudioPlaying(true);
+          setWaitingForGesture(false);
           const steps = 12;
           const step = targetVolume / steps;
           let current = 0;
@@ -292,21 +364,17 @@ const MartsLanding = () => {
             current += step;
             if (current >= targetVolume) {
               audioRef.current.volume = targetVolume;
+              audioRef.current.muted = false;
               clearInterval(id);
             } else {
               audioRef.current.volume = current;
             }
           }, 80);
-          setIsAudioPlaying(true);
         })
-        .catch(() => {
-          setIsAudioPlaying(false);
-          setWaitingForGesture(true);
-        });
+        .catch(() => setWaitingForGesture(true));
     } else {
       audio.pause();
       setIsAudioPlaying(false);
-      setWaitingForGesture(false);
     }
   };
 
@@ -449,17 +517,19 @@ const MartsLanding = () => {
             </button>
             <button
               onClick={toggleAudio}
-              className="px-3 py-1 border border-white/20 rounded-full text-xs font-bold hover:bg-white hover:text-black transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!audioReady && !waitingForGesture}
+              className="px-2.5 py-1 border border-white/20 rounded-full text-xs font-bold hover:bg-white hover:text-black transition-all flex items-center gap-2"
+              aria-label={lang === "ru" ? "Звук" : "Sunet"}
             >
-              {isAudioPlaying || waitingForGesture ? <Volume2 size={16} /> : <VolumeX size={16} />}
-              {lang === "ru"
-                ? isAudioPlaying || waitingForGesture
-                  ? "ЗВУК ВКЛ"
-                  : "ЗВУК ВЫКЛ"
-                : isAudioPlaying || waitingForGesture
-                  ? "SUNET PORNIT"
-                  : "SUNET OPRIT"}
+              {isAudioPlaying ? <Volume2 size={16} /> : <VolumeX size={16} />}
+              <span className="hidden md:inline">
+                {lang === "ru"
+                  ? isAudioPlaying
+                    ? "ЗВУК ВКЛ"
+                    : "ЗВУК ВЫКЛ"
+                  : isAudioPlaying
+                    ? "SUNET PORNIT"
+                    : "SUNET OPRIT"}
+              </span>
             </button>
             <button onClick={() => setIsMenuOpen((prev) => !prev)} className="md:hidden text-white">
               {isMenuOpen ? <X size={32} /> : <Menu size={32} />}
